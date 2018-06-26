@@ -1,0 +1,199 @@
+---
+title: "Module evauation"
+date: June 2017
+output: tufte::tufte_html
+---
+
+```{r}
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message=F, warning=F)
+library(tidyverse)
+library(pander)
+
+options(scipen=1, digits=3)
+panderOptions('round', 3)
+panderOptions('keep.trailing.zeros', TRUE)
+```
+
+
+
+# Setup and data processing
+
+An example of the survey is here: http://www.psy.plymouth.ac.uk/Admin4/ModEvaluation/(S(3dc4nde5u5gop1ffehmd014a))/psyc201.aspx
+
+Data are downloaded from the tech office site as 3x csv files for modules, staff and overall. Set the filenames in the first code block below:
+
+
+
+```{r}
+modules_file <- "tblmodule_20_Jun_2018.csv"
+staff_file <- "tblStaff_20_Jun_2018.csv"
+overall_file <- "tblOverallMSc_20_Jun_2018.csv"
+```
+
+
+```{r}
+modules <- read_csv(modules_file)
+staff <- read_csv(staff_file) 
+
+studentprogrammes <- bind_rows(
+  staff %>% select(userkey, program),
+  modules %>% select(userkey, program)
+) %>% distinct
+
+score_labels <- data_frame(
+  value = 1:5,
+  label = c("Very Positive", "Positive", "Negative", "Very negative", "Not Applicable")
+)
+
+prognames <- data_frame(
+  program = c(501,502,503,551),
+  progname = c(
+    "MSc Psychology", "PRM", "MSc Exchange - Psychology", "MPsych"
+  )
+)
+
+
+question_labels <- data_frame(
+  variable = c(paste("q", 1:11, "a", sep=""), paste("q", 1:11, sep="")),
+  question_label = rep(c(
+    "The Stage Handbooks",
+    "Programme or Pathway lead",
+    "Office hours",
+    "Email.",
+    "Psychology technicians",
+    "Careers",
+    "Faculty Student Reception in the Rolle building",
+    "Range of topics covered in this term.",
+    "Range of assessments.",
+    "Teaching methods.",
+    "Overall experience of Psychology this term"
+  ), 2)
+)
+
+overall <- read_csv(overall_file) %>% 
+  left_join(., studentprogrammes, by=c("userkey", "program")) %>% 
+  mutate(program = ifelse(str_detect(program, "Research Methods"), 502, program)) %>% 
+  mutate(program = ifelse(str_detect(program, "MSc Psychology"), 501, program)) %>% 
+  mutate(program = ifelse(str_detect(program, "MPsych"), 551, program)) %>% 
+  mutate(program = as.numeric(program)) %>% 
+  left_join(., prognames, by="program") %>% 
+  glimpse
+
+
+```
+
+
+
+# Programme level reports
+
+
+## Numeric data
+```{r, fig.width=10, fig.height=10}
+
+qdata <- overall %>% 
+  select(starts_with("q"), Year, progname) %>% 
+  select(-ends_with("a"), Year, progname) %>% 
+  reshape2::melt(id.var=c("Year", "progname")) %>% 
+  mutate(value=as.numeric(value)) %>% filter(!is.na(value))
+
+mypal <- rev(c('#bababa', '#d7191c','#fdae61','#a6d96a','#1a9641'))
+qdatasumm <- qdata %>% 
+  left_join(., question_labels) %>% 
+  left_join(., score_labels) %>% 
+  mutate(value=factor(value, labels=score_labels$label)) %>% 
+  group_by(Year, progname, question_label, value) %>% 
+  summarise(n = n())
+
+p <- qdatasumm %>% 
+  filter(progname %in% c("MPsych", "PRM")) %>% 
+  filter(value!="Not Applicable") %>% 
+  ggplot(aes(x=question_label, y=n, fill=value)) + 
+  geom_bar(stat="identity", position="fill") + 
+  facet_grid(Year~progname) + 
+  xlab("Question") + ylab("Proportion") +
+  scale_fill_manual("", values=mypal) + coord_flip()
+
+ggsave('quant.by.prog.pdf', p)
+p
+```
+
+## Overall comments
+
+```{r}
+programmefeedback <- overall %>%
+  select(progname, Year, matches("q\\w+a")) %>% 
+  reshape2::melt(id.vars=c("Year", "progname")) %>% 
+  left_join(., question_labels) %>% 
+  filter(!is.na(value) & length(stringr::str_trim(value))>10) %>% 
+  mutate(question = naturalsort::naturalfactor(variable)) %>% 
+  arrange(question) %>% 
+  select(progname, Year, question_label, value) 
+
+programmefeedback %>% 
+  arrange(-Year, progname, question_label) %>% 
+  filter(progname=="PRM") %>% 
+  pander::pander(., justify=rep("left", 4))
+```
+
+
+
+
+
+
+# Staff ratings and feedback
+
+### Numeric (not this plot is NOT anonymised)
+
+```{r, fig.fullwidth=T}
+p <- staff %>% 
+  filter(!str_detect(module, "PSYC")) %>% 
+  select(staff, explaining, interesting, overall, year) %>% 
+  group_by(staff, year) %>% 
+  mutate(nresp = n()) %>% 
+  filter(nresp > 2) %>% 
+  mutate(staffn = paste(staff, " (N = ", nresp, ")", sep="")) %>% 
+  select(-nresp) %>% 
+  reshape2::melt(id.vars=c("staff", "staffn", "year")) %>% 
+  filter(year > 2016) %>% 
+  filter(value > 0) %>% 
+  ggplot(aes(variable, value)) + 
+  geom_boxplot() + 
+  facet_wrap(~staff) +
+  geom_hline(yintercept = 2, color="red") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+ggsave('staff.pdf', p, width=6, height=10)
+p
+```
+
+
+
+
+## Staff and module reports for PRM/MPsych
+
+This saves reports per-staff-member into a local directory (as html) for distribution.
+
+```{r}
+staff %>% 
+  filter(!explaining==0) %>% 
+  filter(str_detect(module, "PSY5|PSYC7")) %>% 
+  select(staff, year, module, comments, explaining, interesting, overall) %>% 
+  arrange(staff) %>% 
+  group_by(staff, year) %>% 
+  do(., {
+    f <- paste0("reports/", .$year[1], "-", .$staff[1], ".html")
+    print(xtable::xtable(.), type="html", file=f);
+    data_frame(staff=.$staff[1])})
+
+modules %>% 
+  filter(!str_detect(module, "PSYC")) %>% 
+  select(module, year, semester, comments, workload, feedback, learning) %>%
+  group_by(module, semester, year) %>% 
+    do(., {
+    f <- paste0("reports/", .$year[1], "-", .$module[1], "_semester", .$semester[1], ".html")
+    print(xtable::xtable(.), type="html", file=f);
+    data_frame(module=.$module[1])})
+
+```
+
