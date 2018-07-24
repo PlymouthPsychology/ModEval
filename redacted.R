@@ -10,7 +10,7 @@ library(ggrepel)
 library(psych)
 
 # ensure working directory set to the same folder as the data
-ratings <- read_csv("ME data Lecturing 2017-18 redacted.csv")
+ratings <- read_csv("ME data 2017-18 S1-5 redacted.csv")
 ## NB this data has redacted staffid and moduletitle, and deleted text comments.
 ## NB module codes have been rpelaced by random values
 ## staff names replaced by Person 001 to Person 999
